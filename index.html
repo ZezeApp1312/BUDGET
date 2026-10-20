@@ -309,6 +309,7 @@ input,select{background-color:#FBFBF9;background-image:var(--tex);background-ble
 .hero .split>div.t-ok{background:rgba(27,127,85,.09)}.hero .split>div.t-bad{background:rgba(194,31,69,.09)}
 .pos{color:#1B7F55}.neg{color:#C21F45}.hero .pos{color:#1B7F55}.hero .neg{color:#C21F45}
 .kpi em{display:block;font-style:normal;font-size:13px;margin-top:2px}
+.split3{grid-template-columns:repeat(3,1fr);gap:8px}.split3>div{padding:10px 8px}.split3 b{font-size:17px}.split3 small{font-size:12.5px}
 </style>
 </head>
 <body>
@@ -526,7 +527,7 @@ function txRow(t,view){
 function firstMonth(){var f=S.start;S.tx.forEach(function(t){var m=t.date.slice(0,7);if(m<f)f=m;});return f}
 function monthlySeries(){
   var map={};S.tx.forEach(function(t){var m=t.date.slice(0,7);var o=map[m]||(map[m]={rev:0,out:0});
-    if(t.kind==="rev")o.rev+=t.amount;else if(t.kind==="fix"||t.kind==="var")o.out+=t.amount;});
+    if(t.kind==="rev"||(t.kind==="retr"&&t.link))o.rev+=t.amount;else if(t.kind==="fix"||t.kind==="var"||(t.kind==="vers"&&t.link))o.out+=t.amount;});
   var to=PR?PR.to:ym,fm=firstMonth();if(to>curYM)to=curYM;if(fm>to)return [];
   var cum=0;return monthsFrom(fm,to).map(function(m){var o=map[m]||{rev:0,out:0},n=o.rev-o.out;cum+=n;return {m:m,net:n,cum:cum}});
 }
@@ -617,9 +618,11 @@ function groupItems(kind,onlyPl){
     if(want!==null){var c=catOf("var",t.cat);if(!c||!!c.plaisir!==want)return;}
     map[t.cat]=(map[t.cat]||0)+t.amount;});
   var sub=want===null?null:S.cats.var.filter(function(c){return !!c.plaisir===want}),pal=want===true?SH.pl:SH.ind;
-  return Object.keys(map).map(function(id){
+  var res=Object.keys(map).map(function(id){
     var col=sub?pal[Math.max(0,sub.findIndex(function(c){return c.id===id}))%pal.length]:catColor(kind,id);
     return {n:catName(kind,id),v:map[id],c:col}});
+  if(kind==="rev"){var lr=0;S.tx.forEach(function(t){if(t.kind==="retr"&&t.link&&inMonth(t))lr+=t.amount;});if(lr>0)res.push({n:"Depuis l\u2019épargne",v:lr,c:"#6A1B9A"});}
+  return res;
 }
 function dashSwitch(){
   return '<div class="seg big" role="group" aria-label="Choisir le tableau de bord"><button data-dash="cc" aria-pressed="'+(dsel==="cc")+'">Compte courant</button><button data-dash="ep" aria-pressed="'+(dsel==="ep")+'">Épargne</button></div>';
@@ -635,14 +638,14 @@ function dashBar(r){
 }
 function viewDashCC(r){
   var m=monthStats(),cc=ccBalance(),ser=monthlySeries(),last=ser[ser.length-1]||{net:0,cum:0};
-  var out=m.fix+m.var,net=m.rev-out,single=r.n===1,ent=m.rev+m.lretr,sor=out+m.lvers;
+  var out=m.fix+m.var,revT=m.rev+m.lretr,single=r.n===1,ent=m.rev+m.lretr,sor=out+m.lvers,net=ent-sor;
   var totalItems=groupItems("fix").concat(groupItems("var"));
   var payeBy=groupItems("paye").sort(function(a,b){return b.v-a.v}).map(function(x){return x.n+" "+money(x.v)}).join(" \u00b7 ");
   return dashBar(r)+
   '<div class="card hero h-'+tone(cc,100)+'"><div class="lbl">Solde du compte courant'+(r.to<curYM?' fin '+esc(monthLabel(r.to)):'')+'</div><div class="big">'+money(cc)+'</div>'+
   '<div class="split"><div class="t-'+(ent>0?"ok":"zero")+'"><small>Entrées</small><b>'+money(ent)+'</b></div><div class="t-'+(sor>0?(sor>ent?"bad":"warn"):"zero")+'"><small>Sorties</small><b>'+money(sor)+'</b></div></div></div>'+
   '<div class="card"><div class="duo">'+
-    '<div class="kpi t-'+tone(net,Math.max(50,m.rev*0.05))+'"><small>'+(single?"Solde du mois":"Solde de la période")+'</small><b>'+(net>0?"+":"")+money(net)+'</b><em>'+(single?"rentrées − dépenses":"sur "+r.n+" mois · "+(net>0?"+":"")+money(net/r.n)+"/mois")+'</em></div>'+
+    '<div class="kpi t-'+tone(net,Math.max(50,revT*0.05))+'"><small>'+(single?"Solde du mois":"Solde de la période")+'</small><b>'+(net>0?"+":"")+money(net)+'</b><em>'+(single?"entrées − sorties":"sur "+r.n+" mois · "+(net>0?"+":"")+money(net/r.n)+"/mois")+'</em></div>'+
     '<div class="kpi t-'+tone(last.cum,100)+'"><small>Depuis le début</small><b>'+(last.cum>0?"+":"")+money(last.cum)+'</b><em>'+(last.cum<0?"de retard":"d’avance")+'</em></div>'+
   '</div></div>'+
   '<div class="card"><div class="kpi t-'+(m.paye>0?"ok":"zero")+'"><small>Payé par d\u2019autres</small><b>'+money(m.paye)+'</b><em>'+(payeBy||"rien sur la période")+'</em></div></div>'+
@@ -658,13 +661,13 @@ function viewDashCC(r){
 }
 function viewDashEP(r){
   var m=monthStats(),ep=epBalance(),ser=savingsSeries(),single=r.n===1;
-  var netP=m.vers+m.int-m.retr,rv=m.rev>0?m.saved/m.rev:null;
+  var vNet=Math.max(0,m.vers-m.retr),rNet=Math.max(0,m.retr-m.vers),netP=m.vers+m.int-m.retr,rv=m.rev>0?m.saved/m.rev:null;
   var rate=rv===null?"—":Math.round(rv*100)+" %",rt=rv===null||rv===0?"zero":rv<0?"bad":rv<0.05?"warn":"ok";
   var items=S.ep.sups.map(function(x){return {n:x.name,v:supBalance(x.id),c:supColor(x.id)}});
   var hasGoal=S.ep.sups.some(function(x){return x.goal>0});
   return dashBar(r)+
   '<div class="card hero h-'+tone(ep,100)+'"><div class="lbl">Total épargné'+(r.to<curYM?' fin '+esc(monthLabel(r.to)):'')+'</div><div class="big">'+money(ep)+'</div>'+
-  '<div class="split"><div class="t-'+(m.vers>0?"ok":"zero")+'"><small>Versé</small><b>'+money(m.vers)+'</b></div><div class="t-'+(m.retr>0?"warn":"zero")+'"><small>Retiré</small><b>'+money(m.retr)+'</b></div></div></div>'+
+  '<div class="split split3"><div class="t-'+(vNet>0?"ok":"zero")+'"><small>Versé</small><b>'+money(vNet)+'</b></div><div class="t-'+(rNet>0?"warn":"zero")+'"><small>Retiré</small><b>'+money(rNet)+'</b></div><div class="t-'+(m.int>0?"ok":"zero")+'"><small>Reçu</small><b>'+money(m.int)+'</b></div></div></div>'+
   '<div class="card"><div class="duo">'+
     '<div class="kpi t-'+tone(netP)+'"><small>'+(single?"Net du mois":"Net de la période")+'</small><b>'+(netP>0?"+":"")+money(netP)+'</b><em>'+(single?"versé + autres − retiré":"sur "+r.n+" mois · "+(netP>0?"+":"")+money(netP/r.n)+"/mois")+'</em></div>'+
     '<div class="kpi t-'+rt+'"><small>Taux d’épargne</small><b>'+rate+'</b><em>de tes rentrées</em></div>'+
